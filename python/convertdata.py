@@ -1,3 +1,5 @@
+import logging
+import logging.config
 import argparse
 import os.path
 import numpy as np
@@ -61,13 +63,15 @@ def readimageandmat(files, gray, check_size, resize_width, resize_height):
     mat_content = scipy.io.loadmat(files[1])
     saliency = mat_content['I']
     if(check_size):
-        
+        #TODO:
+        a = 1
     print image.shape, saliency.shape
     image_gray = skimage.color.rgb2gray(image)
     skimage.io.imshow(image_gray)
        
 if __name__ == '__main__':
     args = parseArgument()
+    logging.config.dictConfig('logging1.conf')
     filelist = getfilelist(args.imagefolder, args.saliencyfolder, 
                            args.listfile, args.shuffle)
     readimageandmat(filelist[0], args.gray, args.check_size, 
