@@ -1,14 +1,21 @@
+import yaml
 import logging
 import logging.config
+import logging.handlers
 import argparse
 import os.path
+import sys
 import numpy as np
 import scipy.io
-import skimage.io
-import skimage.color
+import skimage.io, skimage.color, skimage.transform
 import h5py
 
-
+def setuplogging():
+    # set log system
+    with open('logging.conf', 'r') as f:
+        conf = yaml.load(f)
+    logging.config.dictConfig(conf)
+    
 def parseArgument():
     parser = argparse.ArgumentParser(description='Prepare the data.')
     parser.add_argument('--gray', action = 'store_true',                         
@@ -57,25 +64,57 @@ def getfilelist(imagefolder, saliencyfolder, listfile, shuffle):
         if(shuffle):
             np.random.shuffle(filelist_np)
         return filelist_np
-        
+ 
 def readimageandmat(files, gray, check_size, resize_width, resize_height):
     image = skimage.io.imread(files[0])
     mat_content = scipy.io.loadmat(files[1])
     saliency = mat_content['I']
+    
     if(check_size):
-        #TODO:
-        a = 1
-    print image.shape, saliency.shape
-    image_gray = skimage.color.rgb2gray(image)
-    skimage.io.imshow(image_gray)
-       
+        if(image.shape[0:2] != saliency.shape):
+            logger_root = logging.getLogger()
+            logger_root.error('size of %s is not equal to size %s' \
+            %(files[0], files[1]))
+            return None
+    
+    # make sure resize_width and resize_height is good
+    resize_width = resize_width if resize_width > 0 else 96
+    resize_height = resize_height if resize_height > 0 else 96
+    
+    if(resize_width > 0 and resize_height > 0):
+        image = skimage.transform.resize(image, (resize_height, resize_width))
+        saliency = skimage.transform.resize(saliency, (resize_height, \
+        resize_width))
+
+    if(gray):
+        image = skimage.color.rgb2gray(image)
+    
+    return image, saliency
+
+    
 if __name__ == '__main__':
+    
+    setuplogging()
+    
+    # parse argv
     args = parseArgument()
-    logging.config.dictConfig('logging1.conf')
+    
+    if args.resize_width <= 0:
+        logger_root = logging.getLogger()
+        logger_root.error('resize_width should be greater than 0')
+        sys.exit(1)
+    if args.resize_height <= 0:
+        logger_root = logging.getLogger()
+        logger_root.error('resize_height should be greater than 0')
+        sys.exit(1)    
+    
     filelist = getfilelist(args.imagefolder, args.saliencyfolder, 
                            args.listfile, args.shuffle)
-    readimageandmat(filelist[0], args.gray, args.check_size, 
+    
+                               
+    image, saliency = readimageandmat(filelist[0], args.gray, args.check_size, 
                     args.resize_width, args.resize_height)
+    skimage.io.imshow(saliency)
 
             
 
