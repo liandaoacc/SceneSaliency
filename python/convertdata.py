@@ -73,7 +73,7 @@ def readimageandmat(files, gray, check_size, resize_width, resize_height):
     if(check_size):
         if(image.shape[0:2] != saliency.shape):
             logger_root = logging.getLogger()
-            logger_root.error('size of %s is not equal to size %s' \
+            logger_root.error('size of %s is not equal to size %s'
             %(files[0], files[1]))
             return None
     
@@ -83,12 +83,13 @@ def readimageandmat(files, gray, check_size, resize_width, resize_height):
     
     if(resize_width > 0 and resize_height > 0):
         image = skimage.transform.resize(image, (resize_height, resize_width))
-        saliency = skimage.transform.resize(saliency, (resize_height, \
-        resize_width))
+        saliency = skimage.transform.resize(saliency, 
+                                            (resize_height, resize_width))
 
     if(gray):
         image = skimage.color.rgb2gray(image)
-    
+    image = image.astype(np.float32)
+    saliency = saliency.astype(np.float32)
     return image, saliency
 
     
@@ -111,11 +112,27 @@ if __name__ == '__main__':
     filelist = getfilelist(args.imagefolder, args.saliencyfolder, 
                            args.listfile, args.shuffle)
     
-                               
-    image, saliency = readimageandmat(filelist[0], args.gray, args.check_size, 
-                    args.resize_width, args.resize_height)
-    skimage.io.imshow(saliency)
-
-            
-
-
+    # get the shape for h5py dataset
+    imageHWC, saliency = readimageandmat(filelist[0], args.gray, 
+                                         args.check_size, args.resize_width, 
+                                         args.resize_height)
+    imageCHW = imageHWC.transpose((2, 0, 1))
+    N = len(filelist)
+    datashape = tuple([N]) + imageCHW.shape
+    labelshape = tuple([N, 1]) + saliency.shape
+    
+    # write to h5py dataset
+    with h5py.File("mytraining.hdf5") as f:
+        dset = f.create_dataset(name = 'data', shape = datashape, 
+                         dtype = np.dtype(np.float32), 
+                         compression="gzip", compression_opts=4)
+        lset = f.create_dataset(name = 'label', shape = labelshape, 
+                         dtype = np.dtype(np.float32), 
+                         compression="gzip", compression_opts=4)
+        for i in range(N):
+            imageHWC, saliency = readimageandmat(filelist[i], args.gray, 
+                                         args.check_size, args.resize_width, 
+                                         args.resize_height)
+            imageCHW = imageHWC.transpose((2, 0, 1))
+            dset[i] = imageCHW
+            lset[i] = saliency
