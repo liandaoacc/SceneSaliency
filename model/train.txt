@@ -1,0 +1,1 @@
+/home/humt/SoftwareProgram/SceneSaliency/Sources/SceneSaliency/python/mytraining.hdf5

@@ -27,12 +27,18 @@ def parseArgument():
     parser.add_argument('--check_size', action = 'store_true',                         
                         help = 'When this option is on, check that \
                         all the item have the same size')
-    parser.add_argument('--resize_width', metavar = 'width', type = int, 
+    parser.add_argument('--resize_imageW', metavar = 'image width', type = int, 
                         nargs = '?', const = 96, default = 96, 
                         help = 'Width images are resized to')
-    parser.add_argument('--resize_height', metavar = 'height', type = int, 
+    parser.add_argument('--resize_imageH', metavar = 'image height', type = int, 
                         nargs = '?', const = 96, default = 96, 
                         help = 'Height images are resized to')
+    parser.add_argument('--resize_saliencyW', metavar = 'saliency width', 
+                        type = int, nargs = '?', const = 48, default = 48, 
+                        help = 'Width saliencys are resized to')
+    parser.add_argument('--resize_saliencyH', metavar = 'saliency height', 
+                        type = int, nargs = '?', const = 48, default = 48, 
+                        help = 'Height saliency are resized to')
     parser.add_argument('--imagefolder', metavar = 'str', 
                         type = str, required = True, 
                         help = 'imagefolder is the root folder \
@@ -65,34 +71,47 @@ def getfilelist(imagefolder, saliencyfolder, listfile, shuffle):
             np.random.shuffle(filelist_np)
         return filelist_np
  
-def readimageandmat(files, gray, check_size, resize_width, resize_height):
+def readimageandmat(files, gray, check_size, resize_imageW, resize_imageH, 
+                    resize_saliencyW, resize_saliencyH):
+    logger_root = logging.getLogger()
     image = skimage.io.imread(files[0])
+    
+    if(image.shape[2] < 3):
+        logger_root.info('%s is not rgb of rgba'%(files[0]))
+        return None
+        
+    if(image.shape[2] == 4):
+        logger_root.info('%s is rgba'%(files[0]))
+        image = image[:,:,0:3]
+        
     mat_content = scipy.io.loadmat(files[1])
     saliency = mat_content['I']
     
     if(check_size):
         if(image.shape[0:2] != saliency.shape):
-            logger_root = logging.getLogger()
             logger_root.error('size of %s is not equal to size %s'
             %(files[0], files[1]))
             return None
     
-    # make sure resize_width and resize_height is good
-    resize_width = resize_width if resize_width > 0 else 96
-    resize_height = resize_height if resize_height > 0 else 96
+    # make sure resize_imageW and resize_imageH is good
+    resize_imageW = resize_imageW if resize_imageW > 0 else 96
+    resize_imageH = resize_imageH if resize_imageH > 0 else 96
     
-    if(resize_width > 0 and resize_height > 0):
-        image = skimage.transform.resize(image, (resize_height, resize_width))
-        saliency = skimage.transform.resize(saliency, 
-                                            (resize_height, resize_width))
-
+    # make sure resize_saliencyW and resize_saliencyH is good
+    resize_saliencyW = resize_saliencyW if resize_saliencyW > 0 else 48
+    resize_saliencyH = resize_saliencyH if resize_saliencyH > 0 else 48
+    if(resize_imageW > 0 and resize_imageH > 0):
+        image = skimage.transform.resize(image, (resize_imageH, resize_imageW))
+    if(resize_saliencyW > 0 and resize_saliencyH > 0):
+        saliency = skimage.transform.resize(saliency, (resize_saliencyH, 
+                                                       resize_saliencyW))
+                                                       
     if(gray):
         image = skimage.color.rgb2gray(image)
     image = image.astype(np.float32)
     saliency = saliency.astype(np.float32)
     return image, saliency
 
-    
 if __name__ == '__main__':
     
     setuplogging()
@@ -100,29 +119,39 @@ if __name__ == '__main__':
     # parse argv
     args = parseArgument()
     
-    if args.resize_width <= 0:
+    if args.resize_imageW <= 0:
         logger_root = logging.getLogger()
-        logger_root.error('resize_width should be greater than 0')
+        logger_root.error('resize_imageW should be greater than 0')
         sys.exit(1)
-    if args.resize_height <= 0:
+    if args.resize_imageH <= 0:
         logger_root = logging.getLogger()
-        logger_root.error('resize_height should be greater than 0')
+        logger_root.error('resize_imageH should be greater than 0')
+        sys.exit(1)   
+
+    if args.resize_saliencyW <= 0:
+        logger_root = logging.getLogger()
+        logger_root.error('resize_saliencyW should be greater than 0')
+        sys.exit(1)
+    if args.resize_saliencyH <= 0:
+        logger_root = logging.getLogger()
+        logger_root.error('resize_saliencyH should be greater than 0')
         sys.exit(1)    
     
     filelist = getfilelist(args.imagefolder, args.saliencyfolder, 
                            args.listfile, args.shuffle)
     
     # get the shape for h5py dataset
-    imageHWC, saliency = readimageandmat(filelist[0], args.gray, 
-                                         args.check_size, args.resize_width, 
-                                         args.resize_height)
+    imageHWC, saliency = readimageandmat(filelist[1], args.gray, args.check_size, 
+                                         args.resize_imageW, args.resize_imageH,
+                                         args.resize_saliencyW, args.resize_saliencyH)
     imageCHW = imageHWC.transpose((2, 0, 1))
+    saliency = saliency.flatten()
     N = len(filelist)
     datashape = tuple([N]) + imageCHW.shape
-    labelshape = tuple([N, 1]) + saliency.shape
+    labelshape = tuple([N]) + saliency.shape
     
     # write to h5py dataset
-    with h5py.File("mytraining.hdf5") as f:
+    with h5py.File(args.outfile) as f:
         dset = f.create_dataset(name = 'data', shape = datashape, 
                          dtype = np.dtype(np.float32), 
                          compression="gzip", compression_opts=4)
@@ -131,8 +160,10 @@ if __name__ == '__main__':
                          compression="gzip", compression_opts=4)
         for i in range(N):
             imageHWC, saliency = readimageandmat(filelist[i], args.gray, 
-                                         args.check_size, args.resize_width, 
-                                         args.resize_height)
+                                         args.check_size, args.resize_imageW, 
+                                         args.resize_imageH, args.resize_saliencyW, 
+                                         args.resize_saliencyH)
             imageCHW = imageHWC.transpose((2, 0, 1))
+            saliency = saliency.flatten()
             dset[i] = imageCHW
             lset[i] = saliency
