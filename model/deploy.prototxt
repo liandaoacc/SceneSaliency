@@ -1,17 +1,10 @@
 name: "scenesaliency"
 
-layer {
-  name: "input"
-  type: "MemoryData"
-  top: "data"
-  top: "label"
-  memory_data_param {
-    batch_size: 1
-    channels: 1
-    height: 96
-    width: 96 
-  }
-}
+input: "data"
+input_dim: 1
+input_dim: 3
+input_dim: 96
+input_dim: 96
 
 layer {
   name: "conv1"
