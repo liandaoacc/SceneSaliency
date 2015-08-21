@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import yaml
 import logging
 import logging.config
@@ -6,8 +7,8 @@ import argparse
 import os.path
 import numpy as np
 import scipy.io
+import matplotlib.pyplot as plt
 import skimage.io, skimage.color, skimage.transform, skimage.exposure
-import h5py
 
 def setuplogging():
     # set log system
@@ -127,6 +128,13 @@ def readimage(imagename, gray):
         image = image[:,:,0:3]
     return image
 
+def normalizeimage(image, normalize_range):
+    image = skimage.exposure.rescale_intensity(image, out_range = normalize_range)
+    # range [0.0 255.0] means image is uint8
+    if(normalize_range[0] == 0 and normalize_range[1] == 255):
+        return image.astype(np.uint8)
+    return image.astype(np.float32)
+    
 def processimage(image, resize_W, resize_H, normalize_range):
     image = skimage.transform.resize(image, (resize_H, resize_W))
     image = skimage.exposure.rescale_intensity(image, out_range = normalize_range)
@@ -134,18 +142,33 @@ def processimage(image, resize_W, resize_H, normalize_range):
     if(normalize_range[0] == 0 and normalize_range[1] == 255):
         return image.astype(np.uint8)
     return image.astype(np.float32)
-    
-def reshapeimage(image, gray):
+
+# scikit image, 2D multichannel is (row, col, ch), 2D grayscale is (row, col)
+# caffe, blob is (N, ch, row, col)
+def hwc2chw(image, gray):
     if(gray):
         size = image.shape + tuple([1])
         image = image.reshape(size)
-    return image.transpose((2, 0, 1)) 
-    
+    return image.transpose((2, 0, 1))
+
+def chw2hwc(image, gray):
+    if(gray):
+        return image[0]
+    return image.transpose((1, 2, 0))
+
 def readsaliency(saliencyname):
     mat_content = scipy.io.loadmat(saliencyname)
     saliency = mat_content['I']
     return saliency
 
+def normalizesaliency(saliency, normalize_range):
+    saliency = skimage.exposure.rescale_intensity(saliency, 
+                                                  out_range = normalize_range)
+    # range [0.0 255.0] means image is uint8
+    if(normalize_range[0] == 0 and normalize_range[1] == 255):
+        return saliency.astype(np.uint8)
+    return saliency.astype(np.float32)
+    
 def processsaliency(saliency, resize_W, resize_H, normalize_range):
     saliency = skimage.transform.resize(saliency, (resize_H, resize_W))
     saliency = skimage.exposure.rescale_intensity(saliency, 
@@ -155,10 +178,13 @@ def processsaliency(saliency, resize_W, resize_H, normalize_range):
         return saliency.astype(np.uint8)
     return saliency.astype(np.float32)
 
-def reshapesaliency(saliency):
+def hw2l(saliency):
     return saliency.flatten()
+    
+def l2hw(saliency, resize_saliencyW, resize_saliencyH):
+    return saliency.reshape((resize_saliencyH, resize_saliencyW))
                                                         
-def readimageandmat(files, gray, check_size, resize_imageW, resize_imageH, 
+def convertimageandmat(files, gray, check_size, resize_imageW, resize_imageH, 
                     resize_saliencyW, resize_saliencyH, normalize_image, 
                     normalize_saliency):
     logger_root = logging.getLogger()
@@ -174,48 +200,55 @@ def readimageandmat(files, gray, check_size, resize_imageW, resize_imageH,
     image = processimage(image, resize_imageW, resize_imageH, normalize_image)
     saliency = processsaliency(saliency, resize_saliencyW, resize_saliencyH, 
                                normalize_saliency)
-    image = reshapeimage(image, gray)
-    saliency = reshapesaliency(saliency)
-    
+    image = hwc2chw(image, gray)
+    saliency = hw2l(saliency)
+
     return image, saliency
 
+def convertimage(imagename, gray, resize_W, resize_H, normalize_image):
+    image = readimage(imagename, gray)
+    image = processimage(image, resize_W, resize_H, normalize_image)
+    image = hwc2chw(image, gray)
+    return image
+ 
+def convertsaliency(saliencyname, resize_W, resize_H, normalize_saliency):
+    saliency = readsaliency(saliencyname)
+    saliency = processsaliency(saliency, resize_W, resize_H, normalize_saliency)
+    saliency = hw2l(saliency)
+    return saliency
+    
 if __name__ == '__main__':
-    
     setuplogging()
-    
     # parse argv
     args = parseArgument()
-    checkresize(args.resize_imageW, args.resize_imageH, 
-                args.resize_saliencyW, args.resize_saliencyH)
-    checknormalizerange(args.normalize_image, args.normalize_saliency)   
-      
     filelist = getfilelist(args.imagefolder, args.saliencyfolder, 
                            args.listfile, args.shuffle)
+    image1, saliency1 = convertimageandmat(filelist[0], args.gray,
+                                           args.check_size, 
+                                           args.resize_imageW, 
+                                           args.resize_imageH, 
+                                           args.resize_saliencyW, 
+                                           args.resize_saliencyH, 
+                                           args.normalize_image, 
+                                           args.normalize_saliency)
+    image1 = chw2hwc(image1, args.gray)
+    saliency1 = l2hw(saliency1, args.resize_saliencyW, args.resize_saliencyH)
     
-    # get the shape for h5py dataset
-    image, saliency = readimageandmat(filelist[1], args.gray, args.check_size, 
-                                         args.resize_imageW, args.resize_imageH,
-                                         args.resize_saliencyW, 
-                                         args.resize_saliencyH, 
-                                         args.normalize_image, 
-                                         args.normalize_saliency)
+    image2 = convertimage(filelist[0][0], args.gray, args.resize_imageW, 
+                          args.resize_imageH, args.normalize_image)
+    image2 = chw2hwc(image2, args.gray)
+    
+    saliency2 = convertsaliency(filelist[0][1], args.resize_saliencyW, 
+                                args.resize_saliencyH, args.normalize_saliency)
+    saliency2 = l2hw(saliency2, args.resize_saliencyW, args.resize_saliencyH)
 
-    N = len(filelist)
-    datashape = tuple([N]) + image.shape
-    labelshape = tuple([N]) + saliency.shape
+    plt.figure()
+    skimage.io.imshow(image1)
+    plt.figure()
+    skimage.io.imshow(saliency1)
+    plt.figure()
+    skimage.io.imshow(image2)
+    plt.figure()
+    skimage.io.imshow(saliency2)
     
-    # write to h5py dataset
-    with h5py.File(args.outfile) as f:
-        dset = f.create_dataset(name = 'data', shape = datashape, 
-                         dtype = np.dtype(np.float32), 
-                         compression="gzip", compression_opts=4)
-        lset = f.create_dataset(name = 'label', shape = labelshape, 
-                         dtype = np.dtype(np.float32), 
-                         compression="gzip", compression_opts=4)
-        for i in range(N):
-            image, saliency = readimageandmat(filelist[i], args.gray, 
-                                         args.check_size, args.resize_imageW, 
-                                         args.resize_imageH, args.resize_saliencyW, 
-                                         args.resize_saliencyH)
-            dset[i] = image
-            lset[i] = saliency
+    skimage.io.show()
